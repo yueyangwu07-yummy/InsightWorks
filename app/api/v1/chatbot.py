@@ -5,7 +5,8 @@ streaming chat, message history management, and chat history clearing.
 """
 
 import json
-from typing import List
+from functools import lru_cache
+from typing import List, Optional
 
 from fastapi import (
     APIRouter,
@@ -28,8 +29,92 @@ from app.schemas.chat import (
     StreamResponse,
 )
 
+try:
+    from cleanlab_codex import Client, Project
+except ImportError:
+    Client = None
+    Project = None
+
 router = APIRouter()
 agent = LangGraphAgent()
+
+
+@lru_cache
+def get_cleanlab_project():
+    """Initialize and return a singleton Cleanlab Project instance.
+
+    Supports two authentication methods:
+    1. User-level API key + Project ID (via Client)
+    2. Project-level Access Key (via Project.from_access_key)
+
+    Uses CLEANLAB_CODEX_API_KEY and CLEANLAB_PROJECT_ID from settings.
+    If CLEANLAB_CODEX_API_KEY is a project access key, it will be used directly.
+    Otherwise, it will be treated as a user-level API key and used with Project ID.
+
+    Logs will appear in Cleanlab Platform only if project_id is provided.
+
+    Returns:
+        Optional[Project]: The Cleanlab Project instance if configured, None otherwise.
+    """
+    if Client is None or Project is None:
+        logger.warning("cleanlab-codex is not installed. Validation will be skipped.")
+        return None
+
+    logger.info("Initializing Cleanlab Project...")
+    
+    # Add debug logging to diagnose configuration issues
+    logger.debug(f"CLEANLAB_CODEX_API_KEY exists: {bool(settings.CLEANLAB_CODEX_API_KEY)}")
+    logger.debug(f"CLEANLAB_CODEX_API_KEY length: {len(settings.CLEANLAB_CODEX_API_KEY) if settings.CLEANLAB_CODEX_API_KEY else 0}")
+    logger.debug(f"CLEANLAB_PROJECT_ID exists: {bool(settings.CLEANLAB_PROJECT_ID)}")
+    logger.debug(f"CLEANLAB_PROJECT_ID length: {len(settings.CLEANLAB_PROJECT_ID) if settings.CLEANLAB_PROJECT_ID else 0}")
+
+    if not settings.CLEANLAB_CODEX_API_KEY:
+        logger.warning("CLEANLAB_CODEX_API_KEY not set. Validation will be skipped.")
+        return None
+
+    # Try method 1: Project Access Key (if Project ID is not required)
+    # If Project.from_access_key works without Project ID, try it first
+    try:
+        logger.debug("Attempting to use Project Access Key (Project.from_access_key)...")
+        project = Project.from_access_key(settings.CLEANLAB_CODEX_API_KEY)
+        logger.info("Cleanlab Project initialized successfully using Access Key.")
+        return project
+    except Exception as access_key_error:
+        logger.debug(f"Project.from_access_key failed (this is expected if using user-level API key): {str(access_key_error)[:100]}")
+
+    # Try method 2: User-level API Key + Project ID
+    if not settings.CLEANLAB_PROJECT_ID:
+        logger.warning("CLEANLAB_PROJECT_ID not set and Access Key method failed. Logs will not appear in Cleanlab Platform.")
+        return None
+
+    try:
+        logger.debug(f"Attempting to use User-level API Key with Client...")
+        logger.debug(f"Creating Client with API key (first 8 chars): {settings.CLEANLAB_CODEX_API_KEY[:8]}...")
+        client = Client(api_key=settings.CLEANLAB_CODEX_API_KEY)
+        logger.debug(f"Retrieving project with ID (first 8 chars): {settings.CLEANLAB_PROJECT_ID[:8]}...")
+        project = client.get_project(settings.CLEANLAB_PROJECT_ID)
+        logger.info(f"Cleanlab Project initialized successfully with project_id: {settings.CLEANLAB_PROJECT_ID[:8]}...")
+        return project
+    except Exception as e:
+        error_msg = str(e)
+        if "user level API key" in error_msg.lower() or "Cannot get user info" in error_msg:
+            logger.error(
+                f"Failed to initialize Cleanlab Project: {error_msg}. "
+                "If you have a Project Access Key, ensure CLEANLAB_PROJECT_ID is empty or not set. "
+                "If you have a User API Key, ensure it's a user-level key, not a project access key."
+            )
+        else:
+            logger.error(f"Failed to initialize Cleanlab Project: {e}", exc_info=True)
+        return None
+
+
+def clear_cleanlab_project_cache():
+    """Clear the cache for get_cleanlab_project to force re-initialization.
+    
+    This is useful when configuration changes or to retry initialization after a failure.
+    """
+    get_cleanlab_project.cache_clear()
+    logger.info("Cleanlab project cache cleared.")
 
 
 
@@ -60,13 +145,56 @@ async def chat(
             message_count=len(chat_request.messages),
         )
 
-       
+        # Initialize Cleanlab project (gracefully fail if not configured)
+        project = get_cleanlab_project()
 
         result = await agent.get_response(
             chat_request.messages, session.id, user_id=session.user_id
         )
 
         logger.info("chat_request_processed", session_id=session.id)
+
+        # After getting response, validate with Cleanlab
+        if project and result:
+            # Extract user query from chat_request.messages (last user message)
+            user_query = ""
+            for msg in reversed(chat_request.messages):
+                if msg.role == "user":
+                    user_query = msg.content
+                    break
+            
+            # Extract assistant response (last assistant message from result)
+            full_response = ""
+            for msg in reversed(result):
+                if msg.role == "assistant":
+                    full_response = msg.content
+                    break
+
+            if user_query and full_response:
+                logger.info("Validating response with Cleanlab...")
+                try:
+                    # Convert chat messages to the format expected by validate
+                    messages = []
+                    for msg in chat_request.messages:
+                        messages.append({
+                            "role": msg.role,
+                            "content": msg.content
+                        })
+                    
+                    # Synchronous API call to validate
+                    results = project.validate(
+                        query=user_query,
+                        response=full_response,
+                        context="",  # RAG context can be added later
+                        messages=messages
+                    )
+                    logger.info(f"Cleanlab validation results: {results}")
+                except Exception as e:
+                    logger.error(f"Error during Cleanlab validation: {e}", exc_info=True)
+            else:
+                logger.warning("Could not extract user query or assistant response for validation.")
+        elif not project:
+            logger.warning("Cleanlab project not initialized. Skipping validation.")
 
         return ChatResponse(messages=result)
     except Exception as e:
@@ -110,19 +238,63 @@ async def chat_stream(
             Raises:
                 Exception: If there's an error during streaming.
             """
+            # Initialize Cleanlab project (gracefully fail if not configured)
+            project = get_cleanlab_project()
+
+            # Prepare variables to capture final response and user query
+            full_response = ""
+            user_query = ""
+            rag_context = ""  # RAG context can be added later
+
             try:
-                full_response = ""
                 with llm_stream_duration_seconds.labels(model=agent.llm.model_name).time():
                     async for chunk in agent.get_stream_response(
                         chat_request.messages, session.id, user_id=session.user_id
                      ):
-                        full_response += chunk
+                        full_response += chunk  # Accumulate the full response
                         response = StreamResponse(content=chunk, done=False)
                         yield f"data: {json.dumps(response.model_dump())}\n\n"
 
                 # Send final message indicating completion
                 final_response = StreamResponse(content="", done=True)
                 yield f"data: {json.dumps(final_response.model_dump())}\n\n"
+
+                # After streaming is complete, validate the response
+                if project and full_response:
+                    # Extract user query from chat_request.messages (last user message)
+                    for msg in reversed(chat_request.messages):
+                        if msg.role == "user":
+                            user_query = msg.content
+                            break
+
+                    if user_query:
+                        logger.info("Streaming complete. Validating with Cleanlab...")
+                        try:
+                            # Convert chat messages to the format expected by validate
+                            messages = []
+                            for msg in chat_request.messages:
+                                messages.append({
+                                    "role": msg.role,
+                                    "content": msg.content
+                                })
+                            
+                            # Synchronous API call (happens after all yields)
+                            # The validate method requires: query, response, context, and messages
+                            results = project.validate(
+                                query=user_query,
+                                response=full_response,
+                                context=rag_context,
+                                messages=messages
+                            )
+                            logger.info(f"Cleanlab validation results: {results}")
+                        except Exception as e:
+                            logger.error(f"Error during Cleanlab validation: {e}", exc_info=True)
+                    else:
+                        logger.warning("Could not extract user query for validation.")
+                elif not full_response:
+                    logger.warning("No response generated. Skipping Cleanlab validation.")
+                elif not project:
+                    logger.warning("Cleanlab project not initialized. Skipping validation.")
 
             except Exception as e:
                 logger.error(

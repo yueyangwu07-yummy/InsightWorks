@@ -54,15 +54,22 @@ def get_environment() -> Environment:
 
 # Load appropriate .env file based on environment
 def load_env_file():
-    """Load environment-specific .env file."""
+    """Load environment-specific .env file.
+
+    Priority: .env.development > .env
+    Also supports environment-specific files like .env.{env}.local, .env.local
+    """
     env = get_environment()
     print(f"Loading environment: {env}")
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
     # Define env files in priority order
+    # Priority: .env.{env}.local > .env.{env} > .env.development > .env.local > .env
+    # This ensures .env.development has higher priority than .env
     env_files = [
         os.path.join(base_dir, f".env.{env.value}.local"),
         os.path.join(base_dir, f".env.{env.value}"),
+        os.path.join(base_dir, ".env.development"),  # Explicit .env.development support (higher priority than .env)
         os.path.join(base_dir, ".env.local"),
         os.path.join(base_dir, ".env"),
     ]
@@ -70,7 +77,7 @@ def load_env_file():
     # Load the first env file that exists
     for env_file in env_files:
         if os.path.isfile(env_file):
-            load_dotenv(dotenv_path=env_file)
+            load_dotenv(dotenv_path=env_file, override=False)  # Don't override existing env vars
             print(f"Loaded environment from {env_file}")
             return env_file
 
@@ -146,6 +153,10 @@ class Settings:
         self.LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
         self.LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
         self.LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
+        # Cleanlab Codex Configuration
+        self.CLEANLAB_CODEX_API_KEY = os.getenv("CLEANLAB_CODEX_API_KEY", "")
+        self.CLEANLAB_PROJECT_ID = os.getenv("CLEANLAB_PROJECT_ID", "")
 
         # LangGraph Configuration
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
