@@ -197,3 +197,63 @@ The application uses a flexible configuration system with environment-specific s
 
 - `.env.development`
 -
+
+## 数据库与密钥配置
+在你的 .env 文件中更新所有必要的配置。
+
+1. 数据库配置
+更新数据库连接设置:
+
+你不需要手动创建表，ORM 会自动处理。如果遇到问题，请手动运行 schemas.sql 文件来创建表。
+
+2. Langfuse (可观测性)
+添加你的 Langfuse 项目密钥。
+
+你可以登录到你的 LANGFUSE_HOST (例如: https://us.cloud.langfuse.com/) 来查看 Agent 的运行轨迹。
+
+3. Cleanlab (数据质量) - 新增
+添加你的 Cleanlab Codex API 密钥和项目 ID。
+
+### 如何获取 CLEANLAB_CODEX_API_KEY:
+
+1. 登录
+
+2. 右上角点击你的头像 → Settings / Account / API Keys
+
+3. 找到 User-level API Key（必须是 User API Key，不是 Project API Key）
+
+点击 Generate New Key（或复制已有的 key）
+
+4. 填入 .env 文件。
+
+### 如何获取 CLEANLAB_PROJECT_ID:
+
+在 Codex 左边栏选择 Projects
+
+找到你创建的项目（如果还没创建就点击 Create Project）
+
+点击进入项目，项目 URL 会是这样：https://codex.cleanlab.ai/projects/abcd1234efg56789
+
+这里的 abcd1234efg56789 就是你的 CLEANLAB_PROJECT_ID。
+
+### 身份验证 & LLM
+关于如何获取其他密钥，ChatGPT 获取教程。
+
+## 如何使用 (API 指南)
+一份关于如何使用 http://127.0.0.1:8000/docs Swagger UI 的快速指南：
+
+1. 注册: 找到 POST /api/v1/auth/register。点击 "Try it out"，输入你的信息，然后点击 "Execute"。从响应体 (response body) 中复制 access_token。
+
+2. 授权: 点击页面右上角的绿色 "Authorize" 按钮（锁图标）。在 value 字段中输入 Bearer (注意 Bearer 后面有个空格)，然后粘贴你复制的 access_token。点击 "Authorize"。
+
+3. 登录 (可选): 如果你已有账户，可以使用 POST /api/v1/auth/login 登录。
+
+4. 获取 Session: 找到 POST /api/v1/auth/session。点击 "Try it out" 和 "Execute"。从响应体中复制新的 access_token。
+
+5. 再次授权: 再次点击 "Authorize" 按钮（锁图标）。用你刚从 /session 获得的新 access_token 替换旧的 token (确保也包含 Bearer )。
+
+6. 聊天: 你现在已通过身份验证。可以使用聊天端点：
+
+POST /api/v1/chatbot/chat
+
+POST /api/v1/chatbot/chat/stream
