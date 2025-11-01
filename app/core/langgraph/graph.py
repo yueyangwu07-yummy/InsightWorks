@@ -51,20 +51,26 @@ def get_langfuse_client():
     Returns:
         Optional[Langfuse]: Langfuse client instance if configured, None otherwise.
     """
+    logger.debug(f"[DIAGNOSTIC] get_langfuse_client: _langfuse_available={_langfuse_available}")
     if not _langfuse_available:
+        logger.debug("[DIAGNOSTIC] get_langfuse_client: langfuse package not available, returning None")
         return None
     
+    logger.debug(f"[DIAGNOSTIC] get_langfuse_client: PUBLIC_KEY exists: {bool(settings.LANGFUSE_PUBLIC_KEY)}, SECRET_KEY exists: {bool(settings.LANGFUSE_SECRET_KEY)}, HOST: {settings.LANGFUSE_HOST}")
     if not settings.LANGFUSE_PUBLIC_KEY or not settings.LANGFUSE_SECRET_KEY:
+        logger.debug("[DIAGNOSTIC] get_langfuse_client: Missing credentials, returning None")
         return None
     
     try:
-        return Langfuse(
+        client = Langfuse(
             public_key=settings.LANGFUSE_PUBLIC_KEY,
             secret_key=settings.LANGFUSE_SECRET_KEY,
             host=settings.LANGFUSE_HOST,
         )
+        logger.debug(f"[DIAGNOSTIC] get_langfuse_client: Successfully created Langfuse client: {type(client)}")
+        return client
     except Exception as e:
-        logger.warning(f"Failed to create Langfuse client: {e}")
+        logger.warning(f"Failed to create Langfuse client: {e}", exc_info=True)
         return None
 from app.schemas import (
     GraphState,
@@ -96,6 +102,9 @@ class LangGraphAgent:
         self.tools_by_name = {tool.name: tool for tool in tools}
         self._connection_pool: Optional[AsyncConnectionPool] = None
         self._graph: Optional[CompiledStateGraph] = None
+        # Dictionary to store active Langfuse traces by session_id
+        # This allows _chat method to access the trace without passing it through config
+        self._active_traces: Dict[str, Any] = {}
 
         logger.info("llm_initialized", model=settings.LLM_MODEL, environment=settings.ENVIRONMENT.value)
 
@@ -178,11 +187,10 @@ class LangGraphAgent:
         langfuse_messages = dump_messages(messages)
         langfuse_generation = None
 
-        # Get trace from config (set by get_response/get_stream_response)
-        # Store trace in config to pass it through LangGraph nodes
-        trace = None
-        if config and isinstance(config, dict):
-            trace = config.get("_langfuse_trace")
+        # Get trace from instance variable (set by get_response/get_stream_response)
+        # Using instance variable instead of config to avoid LangGraph filtering custom fields
+        trace = self._active_traces.get(state.session_id)
+        logger.debug(f"[DIAGNOSTIC] _chat: Retrieving trace for session_id: {state.session_id}, trace is None? {trace is None}, active_traces keys: {list(self._active_traces.keys())}")
         if trace:
             logger.debug(f"Trace available for generation in _chat, session_id: {state.session_id}")
         else:
@@ -191,10 +199,10 @@ class LangGraphAgent:
         for attempt in range(max_retries):
             try:
                 # Create Langfuse generation for tracking
-                # In Langfuse 3.x, generation must be created from a trace, not from client
+                # In Langfuse 3.x, generation must be created from a span using start_generation
                 if trace:
                     try:
-                        langfuse_generation = trace.generation(
+                        langfuse_generation = trace.start_generation(
                             name=f"LLM Call {llm_calls_num + 1}",
                             model=settings.LLM_MODEL,
                             model_parameters={
@@ -223,10 +231,11 @@ class LangGraphAgent:
                 if langfuse_generation:
                     try:
                         response_content = response.content if hasattr(response, 'content') else str(response)
-                        langfuse_generation.end(
+                        langfuse_generation.update(
                             output=response_content,
                             metadata={"success": True, "llm_calls_num": llm_calls_num + 1},
                         )
+                        langfuse_generation.end()
                     except Exception as langfuse_error:
                         logger.debug(f"Failed to update Langfuse generation: {langfuse_error}")
 
@@ -242,7 +251,7 @@ class LangGraphAgent:
                 # Update Langfuse generation with error
                 if langfuse_generation:
                     try:
-                        langfuse_generation.end(
+                        langfuse_generation.update(
                             output=None,
                             metadata={
                                 "success": False,
@@ -250,6 +259,7 @@ class LangGraphAgent:
                                 "attempt": attempt + 1,
                             },
                         )
+                        langfuse_generation.end()
                     except Exception:
                         pass
 
@@ -276,10 +286,11 @@ class LangGraphAgent:
         # Final error tracking
         if langfuse_generation:
             try:
-                langfuse_generation.end(
+                langfuse_generation.update(
                     output=None,
                     metadata={"success": False, "error": "Max retries exceeded"},
                 )
+                langfuse_generation.end()
             except Exception:
                 pass
 
@@ -397,24 +408,27 @@ class LangGraphAgent:
         if self._graph is None:
             self._graph = await self.create_graph()
 
-        # Create Langfuse trace for this conversation
+        # Create Langfuse trace for this conversation (use start_span for root trace in 3.x)
         trace = None
         langfuse_client = get_langfuse_client()
+        logger.debug(f"[DIAGNOSTIC] get_response: langfuse_client is None? {langfuse_client is None}, session_id: {session_id}")
         if langfuse_client:
             try:
-                logger.debug(f"Creating Langfuse trace for get_response, session_id: {session_id}")
-                trace = langfuse_client.trace(
+                logger.debug(f"[DIAGNOSTIC] Creating Langfuse span for get_response, session_id: {session_id}")
+                trace = langfuse_client.start_span(
                     name="Chat Conversation",
-                    session_id=session_id,
-                    user_id=user_id,
+                    input={"messages": len(messages)},
                     metadata={
                         "environment": settings.ENVIRONMENT.value,
-                        "message_count": len(messages),
+                        "session_id": session_id,
+                        "user_id": user_id,
                     },
                 )
-                logger.debug(f"Langfuse trace created successfully for get_response, session_id: {session_id}")
+                logger.debug(f"[DIAGNOSTIC] Langfuse span created successfully for get_response, session_id: {session_id}, trace is None? {trace is None}")
             except Exception as trace_error:
-                logger.warning(f"Failed to create Langfuse trace: {trace_error}", exc_info=True)
+                logger.warning(f"Failed to create Langfuse span: {trace_error}", exc_info=True)
+        else:
+            logger.debug(f"[DIAGNOSTIC] langfuse_client is None, cannot create span")
 
         config = {
             "configurable": {"thread_id": session_id},
@@ -424,9 +438,14 @@ class LangGraphAgent:
                 "environment": settings.ENVIRONMENT.value,
                 "debug": False,
             },
-            # Store trace in config to pass it through LangGraph nodes
-            "_langfuse_trace": trace,
         }
+
+        # Store trace in instance variable for _chat to access
+        if trace:
+            self._active_traces[session_id] = trace
+            logger.debug(f"[DIAGNOSTIC] Stored trace in instance variable, session_id: {session_id}")
+        else:
+            logger.debug(f"[DIAGNOSTIC] trace is None, NOT storing in instance variable, session_id: {session_id}")
 
         try:
             response = await self._graph.ainvoke(
@@ -457,6 +476,16 @@ class LangGraphAgent:
                     pass
             logger.error(f"Error getting response: {str(e)}")
             raise e
+        finally:
+            # Clean up trace from instance variable and end the span
+            if session_id in self._active_traces:
+                trace_to_end = self._active_traces.pop(session_id)
+                if trace_to_end:
+                    try:
+                        trace_to_end.end()
+                        logger.debug(f"Ended and cleaned up trace from instance variable, session_id: {session_id}")
+                    except Exception as end_error:
+                        logger.debug(f"Failed to end trace: {end_error}")
 
     async def get_stream_response(
         self, messages: list[Message], session_id: str, user_id: Optional[str] = None
@@ -471,27 +500,28 @@ class LangGraphAgent:
         Yields:
             str: Tokens of the LLM response.
         """
-        # Create Langfuse trace for this streaming conversation
+        # Create Langfuse trace for this streaming conversation (use start_span for root trace in 3.x)
         trace = None
         langfuse_client = get_langfuse_client()
+        logger.debug(f"[DIAGNOSTIC] get_stream_response: langfuse_client is None? {langfuse_client is None}, session_id: {session_id}")
         if langfuse_client:
             try:
-                logger.debug(f"Creating Langfuse trace for stream, session_id: {session_id}")
-                trace = langfuse_client.trace(
+                logger.debug(f"[DIAGNOSTIC] Creating Langfuse span for stream, session_id: {session_id}")
+                trace = langfuse_client.start_span(
                     name="Stream Chat Conversation",
-                    session_id=session_id,
-                    user_id=user_id,
+                    input={"messages": len(messages), "stream": True},
                     metadata={
                         "environment": settings.ENVIRONMENT.value,
-                        "message_count": len(messages),
+                        "session_id": session_id,
+                        "user_id": user_id,
                         "stream": True,
                     },
                 )
-                logger.debug(f"Langfuse trace created successfully, session_id: {session_id}, trace type: {type(trace)}")
+                logger.debug(f"[DIAGNOSTIC] Langfuse span created successfully for stream, session_id: {session_id}, trace type: {type(trace)}, trace is None? {trace is None}")
             except Exception as trace_error:
-                logger.warning(f"Failed to create Langfuse trace: {trace_error}", exc_info=True)
+                logger.warning(f"Failed to create Langfuse span: {trace_error}", exc_info=True)
         else:
-            logger.debug(f"Langfuse client not available. PUBLIC_KEY exists: {bool(settings.LANGFUSE_PUBLIC_KEY)}, SECRET_KEY exists: {bool(settings.LANGFUSE_SECRET_KEY)}")
+            logger.debug(f"[DIAGNOSTIC] Langfuse client not available. PUBLIC_KEY exists: {bool(settings.LANGFUSE_PUBLIC_KEY)}, SECRET_KEY exists: {bool(settings.LANGFUSE_SECRET_KEY)}")
 
         config = {
             "configurable": {"thread_id": session_id},
@@ -501,11 +531,16 @@ class LangGraphAgent:
                 "environment": settings.ENVIRONMENT.value,
                 "debug": False,
             },
-            # Store trace in config to pass it through LangGraph nodes
-            "_langfuse_trace": trace,
         }
         if self._graph is None:
             self._graph = await self.create_graph()
+
+        # Store trace in instance variable for _chat to access
+        if trace:
+            self._active_traces[session_id] = trace
+            logger.debug(f"[DIAGNOSTIC] Stored trace in instance variable for stream, session_id: {session_id}")
+        else:
+            logger.debug(f"[DIAGNOSTIC] trace is None, NOT storing in instance variable for stream, session_id: {session_id}")
 
         full_response = ""
         try:
@@ -543,6 +578,16 @@ class LangGraphAgent:
                     pass
             logger.error("Error in stream processing", error=str(stream_error), session_id=session_id)
             raise stream_error
+        finally:
+            # Clean up trace from instance variable and end the span
+            if session_id in self._active_traces:
+                trace_to_end = self._active_traces.pop(session_id)
+                if trace_to_end:
+                    try:
+                        trace_to_end.end()
+                        logger.debug(f"Ended and cleaned up trace from instance variable for stream, session_id: {session_id}")
+                    except Exception as end_error:
+                        logger.debug(f"Failed to end trace: {end_error}")
 
     async def get_chat_history(self, session_id: str) -> list[Message]:
         """Get the chat history for a given thread ID.
