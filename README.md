@@ -257,3 +257,6 @@ The application uses a flexible configuration system with environment-specific s
 POST /api/v1/chatbot/chat
 
 POST /api/v1/chatbot/chat/stream
+
+## 如何使用Langfuse
+需要账号。去这里https://us.cloud.langfuse.com/ 如果你的LANGFUSE_HOST=https://us.cloud.langfuse.com
