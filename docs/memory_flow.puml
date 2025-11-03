@@ -1,0 +1,74 @@
+@startuml Memory Flow Sequence
+!theme plain
+skinparam sequenceMessageAlign center
+skinparam lifelineStrategy solid
+
+actor User
+participant "Chat API" as API
+participant "Memory Classifier" as Classifier
+participant "PostgreSQL" as DB
+participant "Qdrant Vector Store" as VectorDB
+participant "Prompt Builder" as Prompt
+participant "LLM" as LLM
+
+User -> API: Send message
+activate API
+
+API -> Classifier: Classify message
+activate Classifier
+
+Classifier -> Classifier: Check if memory-worthy
+activate Classifier
+
+alt Long-term fact detected
+    Classifier -> DB: Write to UserProfile
+    activate DB
+    DB --> Classifier: Confirmed
+    deactivate DB
+    
+    Classifier -> VectorDB: Embed + Upsert
+    activate VectorDB
+    VectorDB --> Classifier: Stored
+    deactivate VectorDB
+else Summary/high-value content
+    Classifier -> VectorDB: Embed + Upsert only
+    activate VectorDB
+    VectorDB --> Classifier: Stored
+    deactivate VectorDB
+else Not a memory
+    Classifier --> API: No action
+end
+
+deactivate Classifier
+
+API -> Prompt: Build personalized prompt
+activate Prompt
+
+Prompt -> VectorDB: Semantic retrieval (top K)
+activate VectorDB
+
+VectorDB -> VectorDB: Search with threshold
+activate VectorDB
+
+alt Score >= threshold
+    VectorDB --> Prompt: Return matched memories
+else Below threshold
+    VectorDB --> Prompt: No memories
+end
+
+deactivate VectorDB
+
+Prompt -> Prompt: Inject memories into system prompt
+activate Prompt
+Prompt --> API: Enhanced prompt with context
+deactivate Prompt
+
+API -> LLM: Process with context
+activate LLM
+LLM --> API: Response
+deactivate LLM
+
+API --> User: Return response
+deactivate API
+
+@enduml

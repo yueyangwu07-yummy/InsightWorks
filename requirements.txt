@@ -96,7 +96,9 @@ googleapis-common-protos==1.71.0
 greenlet==3.2.4
     # via sqlalchemy
 grpcio==1.76.0
-    # via opentelemetry-exporter-otlp-proto-grpc
+    # via
+    #   opentelemetry-exporter-otlp-proto-grpc
+    #   qdrant-client
 h11==0.16.0
     # via
     #   httpcore
@@ -116,6 +118,7 @@ httpx==0.28.1
     #   langsmith
     #   openai
     #   postgrest
+    #   qdrant-client
     #   storage3
     #   supabase
     #   supabase-auth
@@ -202,8 +205,11 @@ numpy==2.3.4
     # via
     #   langchain-community
     #   pandas
+    #   qdrant-client
 openai==2.6.1
-    # via langchain-openai
+    # via
+    #   langgraph-fastapi-template (pyproject.toml)
+    #   langchain-openai
 opentelemetry-api==1.38.0
     # via
     #   langfuse
@@ -252,6 +258,8 @@ pandas==2.3.3
     # via cleanlab-tlm
 passlib==1.7.4
     # via langgraph-fastapi-template (pyproject.toml)
+portalocker==3.2.0
+    # via qdrant-client
 postgrest==2.23.0
     # via supabase
 primp==0.15.0
@@ -270,8 +278,13 @@ protobuf==6.33.0
     # via
     #   googleapis-common-protos
     #   opentelemetry-proto
+    #   qdrant-client
 psycopg==3.2.12
-    # via langgraph-checkpoint-postgres
+    # via
+    #   langgraph-fastapi-template (pyproject.toml)
+    #   langgraph-checkpoint-postgres
+psycopg-binary==3.2.12
+    # via psycopg
 psycopg-pool==3.2.7
     # via langgraph-checkpoint-postgres
 psycopg2-binary==2.9.11
@@ -297,6 +310,7 @@ pydantic==2.12.3
     #   openai
     #   postgrest
     #   pydantic-settings
+    #   qdrant-client
     #   realtime
     #   sqlmodel
     #   storage3
@@ -321,11 +335,15 @@ python-multipart==0.0.20
     # via langgraph-fastapi-template (pyproject.toml)
 pytz==2025.2
     # via pandas
+pywin32==311
+    # via portalocker
 pyyaml==6.0.3
     # via
     #   langchain-classic
     #   langchain-community
     #   langchain-core
+qdrant-client==1.15.1
+    # via langgraph-fastapi-template (pyproject.toml)
 realtime==2.23.0
     # via supabase
 regex==2025.10.23
@@ -427,7 +445,9 @@ tzdata==2025.2
     #   pandas
     #   psycopg
 urllib3==2.5.0
-    # via requests
+    # via
+    #   qdrant-client
+    #   requests
 uvicorn==0.38.0
     # via langgraph-fastapi-template (pyproject.toml)
 websockets==15.0.1

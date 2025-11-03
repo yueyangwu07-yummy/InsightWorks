@@ -7,8 +7,15 @@ wheels/
 *.egg-info
 *.jsonl
 
+# Test artifacts
+tests/__pycache__/
+tests/*.pyc
+
 # Virtual environments
 .venv
+venv/
+lang-agent/
+env/
 
 # Environment variables
 .env
@@ -21,3 +28,23 @@ wheels/
 
 # Reports
 evals/reports/
+
+# Debug logs
+debug_messages.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary test files in project root
+/test_*.py
+
+# Miscellaneous
+query

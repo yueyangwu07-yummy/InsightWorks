@@ -51,6 +51,20 @@ async def lifespan(app: FastAPI):
     )
     yield
     logger.info("application_shutdown")
+    
+    # Flush Langfuse on shutdown to ensure all spans are sent
+    try:
+        from app.core.langfuse_client import get_langfuse_client
+        langfuse_client = get_langfuse_client()
+        if langfuse_client:
+            # Langfuse 3.x SDK automatically flushes, but try explicit flush if available
+            if hasattr(langfuse_client, 'flush'):
+                langfuse_client.flush()
+            elif hasattr(langfuse_client, 'shutdown'):
+                langfuse_client.shutdown()
+            logger.info("Langfuse flush completed on shutdown")
+    except Exception as flush_error:
+        logger.warning(f"Failed to flush Langfuse on shutdown: {flush_error}")
 
 
 app = FastAPI(

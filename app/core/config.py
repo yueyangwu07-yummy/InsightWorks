@@ -213,6 +213,26 @@ class Settings:
         self.EVALUATION_API_KEY = os.getenv("EVALUATION_API_KEY", self.LLM_API_KEY)
         self.EVALUATION_SLEEP_TIME = int(os.getenv("EVALUATION_SLEEP_TIME", "10"))
 
+        # Long-term Memory Configuration
+        self.FEATURE_LONG_TERM_MEMORY = os.getenv("FEATURE_LONG_TERM_MEMORY", "false").lower() in ("true", "1", "t", "yes")
+        self.FEATURE_MEMORY_CLASSIFIER = os.getenv("FEATURE_MEMORY_CLASSIFIER", "false").lower() in ("true", "1", "t", "yes")
+        self.FEATURE_MEMORY_RETRIEVAL = os.getenv("FEATURE_MEMORY_RETRIEVAL", "false").lower() in ("true", "1", "t", "yes")
+        
+        # Vector Backend Configuration
+        self.VECTOR_BACKEND = os.getenv("VECTOR_BACKEND", "qdrant")
+        self.QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+        self.QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "none")
+        
+        # Embedding Configuration
+        self.EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+        
+        # Memory Retrieval Configuration
+        self.MEM_TOP_K = int(os.getenv("MEM_TOP_K", "3"))
+        self.MEM_MIN_SCORE = float(os.getenv("MEM_MIN_SCORE", "0.55"))
+        
+        # JWT Configuration Extension
+        self.JWT_USER_ID_FIELD = os.getenv("JWT_USER_ID_FIELD", "sub")
+
         # Apply environment-specific settings
         self.apply_environment_settings()
 

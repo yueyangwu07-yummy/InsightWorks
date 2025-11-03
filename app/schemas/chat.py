@@ -2,8 +2,11 @@
 
 import re
 from typing import (
+    Any,
+    Dict,
     List,
     Literal,
+    Optional,
 )
 
 from pydantic import (
@@ -17,14 +20,22 @@ class Message(BaseModel):
     """Message model for chat endpoint.
 
     Attributes:
-        role: The role of the message sender (user or assistant).
+        role: The role of the message sender (user, assistant, system, or tool).
         content: The content of the message.
+        tool_call_id: Tool call ID for tool messages (required for tool role).
+        name: Tool name for tool messages (required for tool role).
+        tool_calls: Tool calls for assistant messages (required when assistant calls tools).
     """
 
     model_config = {"extra": "ignore"}
 
-    role: Literal["user", "assistant", "system"] = Field(..., description="The role of the message sender")
+    role: Literal["user", "assistant", "system", "tool"] = Field(..., description="The role of the message sender")
     content: str = Field(..., description="The content of the message", min_length=1, max_length=3000)
+    
+    # OpenAI tool calling support
+    tool_call_id: Optional[str] = Field(None, description="Tool call ID for tool messages")
+    name: Optional[str] = Field(None, description="Tool name for tool messages")
+    tool_calls: Optional[List[Dict[str, Any]]] = Field(None, description="Tool calls for assistant messages")
 
     @field_validator("content")
     @classmethod

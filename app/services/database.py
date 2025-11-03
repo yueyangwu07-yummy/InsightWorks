@@ -22,6 +22,7 @@ from app.core.config import (
 from app.core.logging import logger
 from app.models.session import Session as ChatSession
 from app.models.user import User
+from app.models.user_profile import UserProfile
 
 
 class DatabaseService:
@@ -245,6 +246,53 @@ class DatabaseService:
         except Exception as e:
             logger.error("database_health_check_failed", error=str(e))
             return False
+
+    async def create_user_profile(
+        self,
+        user_id: int,
+        memory_type: str,
+        memory_content: str,
+    ) -> UserProfile:
+        """Create a new user profile memory.
+        
+        Args:
+            user_id: The user ID
+            memory_type: Type of memory
+            memory_content: JSON string with memory facts
+            
+        Returns:
+            UserProfile: The created profile memory
+        """
+        with Session(self.engine) as session:
+            from datetime import datetime, UTC
+            profile = UserProfile(
+                user_id=user_id,
+                memory_type=memory_type,
+                memory_content=memory_content,
+                updated_at=datetime.now(UTC).isoformat(),
+            )
+            session.add(profile)
+            session.commit()
+            session.refresh(profile)
+            logger.info("user_profile_created", user_id=user_id, memory_type=memory_type)
+            return profile
+
+    async def get_user_profiles(self, user_id: int, memory_type: Optional[str] = None) -> List[UserProfile]:
+        """Get user profile memories.
+        
+        Args:
+            user_id: The user ID
+            memory_type: Optional filter by memory type
+            
+        Returns:
+            List of UserProfile memories
+        """
+        with Session(self.engine) as session:
+            statement = select(UserProfile).where(UserProfile.user_id == user_id)
+            if memory_type:
+                statement = statement.where(UserProfile.memory_type == memory_type)
+            profiles = session.exec(statement).all()
+            return profiles
 
 
 # Create a singleton instance
